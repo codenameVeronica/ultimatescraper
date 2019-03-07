@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Ultimate WebScraper</title>
+    </head>
+    <body>
+        <style>
+            body
+            {
+                margin: 0px;
+            }
+            .left-panel
+            {
+                position: absolute;
+                top: 32px;
+                left: 32px;
+                bottom: 384px;
+                right: 512px;
+                
+                overflow-y: scroll;
+                
+                outline: 1px solid black;
+            }
+            .right-panel
+            {
+                position: absolute;
+                top: 32px;
+                right: 32px;
+                bottom: 384px;
+                left: 512px;
+                
+                outline: 1px solid black;
+            
+            }
+            .bottom-panel
+            {
+                position: absolute;
+                bottom: 32px;
+                top: 384px;
+                left: 32px;
+                right: 32px;
+                
+                outline: 1px solid black;
+            }
+            .messages
+            {
+                position: absolute;
+                top: 0px;
+                bottom: 0px;
+                right: 0px;
+                left: 0px;
+                overflow-y: scroll;
+            }
+            ul.downloads
+            {
+                position: absolute;
+                top: 0px;
+                bottom: 0px;
+                right: 0px;
+                left: 0px;
+                background-color: beige;
+                overflow-y: scroll;
+            }
+            ul.downloads li
+            {
+                list-style: none;
+                outline: 1px solid black;
+            }
+            #closing-x
+            {
+                position: absolute;
+                top: 0px;
+                right: 0px;
+                width: 32px;
+                height: 32px;
+                cursor: pointer;
+            }
+        </style>
+        <script src="jquery-3.0.0.min.js"></script>
+        
+        <div class="left-panel">
+            <h3>The Ultimate WebScraper</h3>
+            <span>Choose your module: </span>
+            <select name="module" class="module-select">
+                <option value="null">---</option>
+                <!-- <option value="just-scrape-emails">Scrape e-mails</option>
+                <option value="panoramafirm">Panorama firm scraper</option> -->
+            </select>
+            <div class="module-options">
+            </div>
+            <p>Max concurrent downloads:</p>
+            <input type="number" value="8" name="max-downloads" />
+            <div class="output-options">
+                <p>Output file:</p>
+                <input name="output-file" value="out.csv" /><br/>
+                <span>Include CSV headers: </span>
+                <input type="checkbox" name="include-headers" /><br/>
+            </div>
+            <button id="scrape-button">Scrape!</button>
+        </div>
+        <div class="right-panel">
+            <ul class="downloads">
+            </ul>
+        </div>
+        <div class="bottom-panel">
+            <div class="messages"></div>
+        </div>
+        <div id="closing-x">
+        X
+        </div>
+        <script>
+            window.$ = window.jQuery = require(__dirname + "/jquery-3.1.0.min.js");
+            const {dialog} = require("electron").remote;
+            var fs = require("fs");
+            
+            var files = fs.readdirSync("./scraper/modules");
+            files.forEach(function(file){
+                if (file.substr(file.length-3, 3) != ".js")
+                    return;
+                var mod = require("./scraper/modules/" + file);
+                var name = mod.name;
+                var id = file.substr(0, file.length-3);
+                $(".module-select").append($("<option value='" + id + "'>" + name + "</option>"));
+            });
+            
+            var currentModule = null;
+            
+            $(".module-select").change(function(){
+                if ($(this).val() == "null")
+                {
+                    $(".module-options").html("");
+                    return;
+                }
+                currentModule = require("./scraper/modules/" + $(this).val() + ".js");
+                var modOpts = currentModule.getOptions();
+                $(".module-options").html("<table></table>");
+                modOpts.forEach(function(opt, i) {
+                    var typestr = "";
+                    if (opt.type == "number")
+                        typestr = " type='number'";
+                    $("<tr><td>" + opt.name + "</td><td><input name='" + opt.id + "'"+typestr+"></input></td></tr>")
+                        .appendTo($(".module-options table"));
+                    if (opt.type == "file-read")
+                        $(".module-options table input[name='" + opt.id + "']").click(function(){
+                           var paths = dialog.showOpenDialog({title: "Choose file to read from", defaultPath: __dirname});
+                           $(".module-options table input[name='" + opt.id + "']").val(paths[0]);
+                        });
+                    if (opt.type == "file-write")
+                        $(".module-options table input[name='" + opt.id + "']").click(function(){
+                           var path = dialog.showSaveDialog({title: "Choose file to write to", defaultPath: __dirname});
+                           $(".module-options table input[name='" + opt.id + "']").val(path);
+                        });
+                });
+            });
+            
+            $(".output-options input[name='output-file']").click(function(){
+                var path = dialog.showSaveDialog({title: "Choose file for CSV output", defaultPath: __dirname});
+                $(".output-options input[name='output-file']").val(path);
+            });
+            
+            $("#closing-x").click(function(){
+                const app = require('electron').remote.app;
+                app.quit();
+            });
+            
+            $("#scrape-button").click(function(){
+                var Scraper = require("./scraper/scraper");
+                var scraper = new Scraper();
+                
+                $(".messages").html("");
+                
+                var taskOptions = {};
+                var modOpts = currentModule.getOptions();
+                modOpts.forEach(function(opt, i) {
+                    taskOptions[opt.id] = $(".module-options input[name='" + opt.id + "']").val();
+                });
+                
+                
+                scraper.add($(".module-select").val(), taskOptions);
+                
+                console.log($(".module-select").val() + " " + JSON.stringify(taskOptions));
+                
+                scraper.on("download-starting", function(options) {
+                    var ro = options.requestOptions;
+                    console.log("Adding download of id " + options.id);
+                    console.log(JSON.stringify(options));
+                    $("ul.downloads").append("<li data-id='" + options.id + "'>" + ro.method + " " + ro.protocol + "//" + ro.hostname + ro.path + "<span>0/???</span></li>");
+
+                });
+                
+                scraper.on("module-warning", function(options){
+                   $(".messages").append($("<p>Warning: <i>" + options.message + "</i></p>"));
+                });
+                
+                scraper.on("module-error", function(options){
+                   $(".messages").append($("<p>Error: <b>" + options.message + "</b></p>"));
+                });
+                
+                scraper.on("download-state", function(options){
+                    $("ul.downloads li[data-id='" + options.id + "'] span").html(options.bytesDone + "/???")
+                });
+                
+                scraper.on("download-finished", function(options) {
+                    console.log("Removing download of id " + options.id);
+                    $("ul.downloads li[data-id='" + options.id + "']").remove();
+                });
+                
+                scraper.on("download-failed", function(options) {
+                    console.log("Removing download of id " + options.id + ", will be retried");
+                    console.log("Reason: " + options.error);
+                    $("ul.downloads li[data-id='" + options.id + "']").remove();
+                });
+                
+                scraper.on("new-contact", function(contact){
+                    $("<p><i>"+JSON.stringify(contact)+"</i></p>").appendTo($(".messages"));
+                });
+                
+                scraper.setMaxDownloads(Number($("input[name='max-downloads']").val()));
+                
+                scraper.setupCSVStorage($("input[name='output-file']").val(), $("input[name='include-headers']").is(":checked"));
+                
+                $("#scrape-button").prop("disabled", true);
+                
+                scraper.scrape(function(){
+                    $("#scrape-button").prop("disabled", false);
+                });
+                
+            
+            });
+        </script>
+    </body>
+</html>
